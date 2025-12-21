@@ -7,6 +7,7 @@ import type {
   ContentPart,
 } from "../api/types";
 import type { paths, components } from "../api/opencode-types";
+import { useSessionStatus } from "@/stores/sessionStatusStore";
 
 type AssistantMessage = components["schemas"]["AssistantMessage"];
 
@@ -49,17 +50,39 @@ export const useSession = (opcodeUrl: string | null | undefined, sessionID: stri
 
 export const useMessages = (opcodeUrl: string | null | undefined, sessionID: string | undefined, directory?: string) => {
   const client = useOpenCodeClient(opcodeUrl, directory);
+  const setSessionStatus = useSessionStatus((state) => state.setStatus);
+  const getSessionStatus = useSessionStatus((state) => state.getStatus);
 
   return useQuery({
     queryKey: ["opencode", "messages", opcodeUrl, sessionID, directory],
     queryFn: () => client!.listMessages(sessionID!),
     enabled: !!client && !!sessionID,
-    refetchOnMount: false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     staleTime: 30000,
     gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData,
+    onSuccess: (data) => {
+      if (!sessionID) return;
+
+      const hasActiveAssistant = data.some((message) => {
+        if (message.info.role !== "assistant") return false;
+        const assistantInfo = message.info as AssistantMessage;
+        return !assistantInfo.time.completed;
+      });
+
+      const currentStatus = getSessionStatus(sessionID);
+
+      if (hasActiveAssistant) {
+        if (currentStatus.type !== "retry") {
+          setSessionStatus(sessionID, { type: "busy" });
+        }
+        return;
+      }
+
+      setSessionStatus(sessionID, { type: "idle" });
+    },
   });
 };
 
