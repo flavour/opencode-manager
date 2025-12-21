@@ -48,12 +48,16 @@ export const useSession = (opcodeUrl: string | null | undefined, sessionID: stri
   });
 };
 
-export const useMessages = (opcodeUrl: string | null | undefined, sessionID: string | undefined, directory?: string) => {
+export const useMessages = (
+  opcodeUrl: string | null | undefined,
+  sessionID: string | undefined,
+  directory?: string,
+) => {
   const client = useOpenCodeClient(opcodeUrl, directory);
   const setSessionStatus = useSessionStatus((state) => state.setStatus);
   const getSessionStatus = useSessionStatus((state) => state.getStatus);
 
-  return useQuery({
+  const query = useQuery<MessageListResponse>({
     queryKey: ["opencode", "messages", opcodeUrl, sessionID, directory],
     queryFn: () => client!.listMessages(sessionID!),
     enabled: !!client && !!sessionID,
@@ -63,27 +67,30 @@ export const useMessages = (opcodeUrl: string | null | undefined, sessionID: str
     staleTime: 30000,
     gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData,
-    onSuccess: (data) => {
-      if (!sessionID) return;
-
-      const hasActiveAssistant = data.some((message) => {
-        if (message.info.role !== "assistant") return false;
-        const assistantInfo = message.info as AssistantMessage;
-        return !assistantInfo.time.completed;
-      });
-
-      const currentStatus = getSessionStatus(sessionID);
-
-      if (hasActiveAssistant) {
-        if (currentStatus.type !== "retry") {
-          setSessionStatus(sessionID, { type: "busy" });
-        }
-        return;
-      }
-
-      setSessionStatus(sessionID, { type: "idle" });
-    },
   });
+
+  useEffect(() => {
+    if (!sessionID || !query.data) return;
+
+    const hasActiveAssistant = query.data.some((message) => {
+      if (message.info.role !== "assistant") return false;
+      const assistantInfo = message.info as AssistantMessage;
+      return !assistantInfo.time.completed;
+    });
+
+    const currentStatus = getSessionStatus(sessionID);
+
+    if (hasActiveAssistant) {
+      if (currentStatus.type !== "retry") {
+        setSessionStatus(sessionID, { type: "busy" });
+      }
+      return;
+    }
+
+    setSessionStatus(sessionID, { type: "idle" });
+  }, [sessionID, query.data, getSessionStatus, setSessionStatus]);
+
+  return query;
 };
 
 export const useCreateSession = (opcodeUrl: string | null | undefined, directory?: string) => {
